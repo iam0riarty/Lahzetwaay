@@ -1,10 +1,22 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+
+const WEEKS_LIST = [
+  {icon:'🗣️',title:'أسبوع الصمت',task:'التزمت بالصمت إلا لضرورة أو خير'},
+  {icon:'🍽️',title:'أسبوع الجوع',task:'خففت الطعام وتأملت في نعمة الشبع'},
+  {icon:'👁️',title:'أسبوع الغض',task:'غضضت بصري وقللت الشاشات'},
+  {icon:'🤲',title:'أسبوع السخاء',task:'تصدقت أو خدمت شخصاً بلا مقابل'},
+  {icon:'😊',title:'أسبوع البشاشة',task:'ابتسمت وأسعدت شخصاً من حولي'},
+  {icon:'🧹',title:'أسبوع الطهارة',task:'حافظت على الوضوء الدائم'},
+  {icon:'🌙',title:'أسبوع الليل',task:'قمت الليل ودعوت في السجود بصدق'},
+  {icon:'🤫',title:'أسبوع إخفاء العمل',task:'عملت خيراً سرياً لا يعلمه أحد'},
+  {icon:'🌿',title:'أسبوع الزهد',task:'أحجمت عن الاستهلاك وتأملت الزوال'},
+  {icon:'👥',title:'أسبوع صلة الرحم',task:'تواصلت مع أهلي وأسعدت أحدهم'},
+]
 
 const today = () => new Date().toISOString().split('T')[0]
-const CODE_TYPES = ['admin', 'hafiz', 'group']
 
 export default function AdminPage({ onBack }) {
   const { verifyCode } = useAuth()
@@ -16,7 +28,16 @@ export default function AdminPage({ onBack }) {
   const [weekCards, setWeekCards] = useState([])
   const [codes, setCodes] = useState({})
   const [newCodes, setNewCodes] = useState({})
-  const [tab, setTab] = useState('overview') // overview | members | codes
+  const [settings, setSettings] = useState({})
+  const [tab, setTab] = useState('overview')
+  const [toast, setToast] = useState('')
+  const [tazkia, setTazkia] = useState(WEEKS_LIST[0])
+  const [worldlyGoals, setWorldlyGoals] = useState([
+    {id:'reading_15',label:'قراءة كتاب',duration:'١٥ دقيقة',icon:'📚'},
+    {id:'skill_30',label:'تعلم مهارة جديدة',duration:'٣٠ دقيقة',icon:'🎯'},
+  ])
+  const [sunnanTarget, setSunnanTarget] = useState(12)
+  const [newGoal, setNewGoal] = useState({label:'',duration:'',icon:'🎯'})
 
   const unlock = async () => {
     const correct = await verifyCode('admin')
@@ -25,70 +46,103 @@ export default function AdminPage({ onBack }) {
   }
 
   const loadData = async () => {
-    const [u, tc, wc, c] = await Promise.all([
+    const weekStart = new Date(); weekStart.setDate(weekStart.getDate()-6)
+    const ws = weekStart.toISOString().split('T')[0]
+    const [u,tc,wc,c,s] = await Promise.all([
       supabase.from('users').select('*').order('joined_at'),
-      supabase.from('daily_cards').select('*').eq('date', today()),
-      supabase.from('daily_cards').select('*').gte('date', getWeekStart()),
+      supabase.from('daily_cards').select('*').eq('date',today()),
+      supabase.from('daily_cards').select('*').gte('date',ws),
       supabase.from('secret_codes').select('*'),
+      supabase.from('admin_settings').select('*'),
     ])
-    if (u.data) setUsers(u.data)
-    if (tc.data) setTodayCards(tc.data)
-    if (wc.data) setWeekCards(wc.data)
-    if (c.data) {
-      const m = {}; c.data.forEach(x=>m[x.code_type]=x.code_value); setCodes(m)
-      setNewCodes({...m})
+    if(u.data) setUsers(u.data)
+    if(tc.data) setTodayCards(tc.data)
+    if(wc.data) setWeekCards(wc.data)
+    if(c.data){const m={};c.data.forEach(x=>m[x.code_type]=x.code_value);setCodes(m);setNewCodes({...m})}
+    if(s.data){
+      s.data.forEach(x=>{
+        if(x.setting_key==='current_tazkia') setTazkia(x.setting_value)
+        if(x.setting_key==='worldly_goals') setWorldlyGoals(x.setting_value)
+        if(x.setting_key==='sunnan_target') setSunnanTarget(parseInt(x.setting_value))
+      })
     }
   }
 
-  const getWeekStart = () => {
-    const d = new Date(); d.setDate(d.getDate()-6)
-    return d.toISOString().split('T')[0]
-  }
+  const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(''),3000) }
 
-  const generateCode = (type) => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-    const code = Array.from({length:8},()=>chars[Math.floor(Math.random()*chars.length)]).join('')
-    setNewCodes(prev=>({...prev,[type]:code}))
+  const deleteUser = async (uid, name) => {
+    if (!window.confirm(`هل تريد حذف "${name}" نهائياً؟\nسيتم حذف كل بياناته.`)) return
+    await supabase.from('users').delete().eq('id',uid)
+    setUsers(prev=>prev.filter(u=>u.id!==uid))
+    setTodayCards(prev=>prev.filter(c=>c.user_id!==uid))
+    setWeekCards(prev=>prev.filter(c=>c.user_id!==uid))
+    showToast(`🗑️ تم حذف ${name}`)
   }
 
   const saveCode = async (type) => {
     await supabase.from('secret_codes').update({code_value:newCodes[type],updated_at:new Date().toISOString()}).eq('code_type',type)
     setCodes(prev=>({...prev,[type]:newCodes[type]}))
-    alert(`✅ تم تحديث كود ${type}`)
+    showToast(`✅ تم تحديث كود ${type}`)
   }
+
+  const genCode = (type) => {
+    const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    setNewCodes(prev=>({...prev,[type]:Array.from({length:8},()=>c[Math.floor(Math.random()*c.length)]).join('')}))
+  }
+
+  const saveTazkia = async () => {
+    await supabase.from('admin_settings').upsert({setting_key:'current_tazkia',setting_value:tazkia,updated_at:new Date().toISOString()},{onConflict:'setting_key'})
+    showToast('✅ تم تحديث أسبوع التزكية')
+  }
+
+  const saveWorldlyGoals = async () => {
+    await supabase.from('admin_settings').upsert({setting_key:'worldly_goals',setting_value:worldlyGoals,updated_at:new Date().toISOString()},{onConflict:'setting_key'})
+    showToast('✅ تم حفظ الأهداف')
+  }
+
+  const saveSunnan = async () => {
+    await supabase.from('admin_settings').upsert({setting_key:'sunnan_target',setting_value:sunnanTarget.toString(),updated_at:new Date().toISOString()},{onConflict:'setting_key'})
+    showToast(`✅ هدف السنن = ${sunnanTarget} ركعة`)
+  }
+
+  const addGoal = () => {
+    if (!newGoal.label) return
+    setWorldlyGoals(prev=>[...prev,{...newGoal,id:'g_'+Date.now()}])
+    setNewGoal({label:'',duration:'',icon:'🎯'})
+  }
+
+  const removeGoal = (id) => setWorldlyGoals(prev=>prev.filter(g=>g.id!==id))
 
   // Stats
-  const totalMembers = users.length
+  const totalM = users.length
   const todayActive = todayCards.length
-  const avgScore = todayCards.length ? Math.round(todayCards.reduce((s,c)=>s+c.score,0)/todayCards.length) : 0
-  const fullDayCount = todayCards.filter(c=>c.score===100).length
+  const avgScore = todayCards.length?Math.round(todayCards.reduce((s,c)=>s+c.score,0)/todayCards.length):0
+  const perfect = todayCards.filter(c=>c.score===100).length
 
-  // Per-member table
-  const getMemberStats = (userId) => {
-    const cards = weekCards.filter(c=>c.user_id===userId)
-    const avg = cards.length ? Math.round(cards.reduce((s,c)=>s+c.score,0)/cards.length) : 0
-    const fajrDays = cards.filter(c=>c.fajr===true).length
-    return { days: cards.length, avg, fajrDays }
+  const getMemberStats = (uid) => {
+    const cards = weekCards.filter(c=>c.user_id===uid)
+    return {
+      days:cards.length,
+      avg:cards.length?Math.round(cards.reduce((s,c)=>s+c.score,0)/cards.length):0,
+      fajr:cards.filter(c=>c.fajr===true).length
+    }
   }
 
-  // Chart data
-  const chartData = users.slice(0,10).map(u=>{
-    const s = getMemberStats(u.id)
-    return { name: u.name.split(' ')[0], avg: s.avg, days: s.days }
-  })
+  const chartData = users.slice(0,12).map(u=>({name:u.name.split(' ')[0],...getMemberStats(u.id)}))
 
   if (!unlocked) return (
     <div className="app-container" style={{display:'flex',flexDirection:'column',justifyContent:'center',minHeight:'100vh'}}>
       <div style={{textAlign:'center',marginBottom:28}}>
         <span style={{fontSize:48}}>🛡️</span>
-        <h2 style={{fontFamily:'Amiri,serif',fontSize:26,color:'var(--gold)',marginTop:8}}>لوحة الأدمن</h2>
+        <h2 style={{fontFamily:"'Amiri',serif",fontSize:26,color:'var(--gold)',marginTop:8}}>لوحة الأدمن</h2>
         <p style={{fontSize:12,color:'var(--text-sub)',marginTop:6,letterSpacing:2}}>للمشرف فقط</p>
       </div>
       <div className="card">
         <div className="card-accent gold"/>
-        <input className="input-field" type="password" placeholder="كود الأدمن..." value={codeInput} onChange={e=>setCodeInput(e.target.value)}
-          onKeyDown={e=>e.key==='Enter'&&unlock()} style={{marginBottom:10,direction:'ltr',textAlign:'center',letterSpacing:4,fontSize:18}}/>
-        {codeError && <p style={{color:'var(--red)',fontSize:13,textAlign:'center',marginBottom:8}}>{codeError}</p>}
+        <input className="input-field" type="password" placeholder="كود الأدمن..." value={codeInput}
+          onChange={e=>setCodeInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&unlock()}
+          style={{marginBottom:10,direction:'ltr',textAlign:'center',letterSpacing:4,fontSize:18}}/>
+        {codeError&&<p style={{color:'var(--red)',fontSize:13,textAlign:'center',marginBottom:8}}>{codeError}</p>}
         <button className="btn btn-gold btn-full" onClick={unlock}>🛡️ دخول</button>
       </div>
       <button className="btn btn-ghost" style={{marginTop:12}} onClick={onBack}>← رجوع</button>
@@ -98,110 +152,88 @@ export default function AdminPage({ onBack }) {
   return (
     <div className="app-container">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-        <div>
-          <p style={{fontSize:11,color:'var(--text-sub)'}}>لوحة</p>
-          <p style={{fontSize:16,fontWeight:700,color:'var(--gold)'}}>🛡️ الأدمن</p>
-        </div>
+        <div><p style={{fontSize:11,color:'var(--text-sub)'}}>لوحة</p><p style={{fontSize:16,fontWeight:700,color:'var(--gold)'}}>🛡️ الأدمن</p></div>
         <button className="btn btn-ghost" style={{padding:'7px 12px',fontSize:12}} onClick={onBack}>← رجوع</button>
       </div>
 
-      {/* Tabs */}
-      <div className="nav-tabs">
-        {[['overview','📊 نظرة عامة'],['members','👥 الأعضاء'],['codes','🔑 الأكواد']].map(([k,l])=>(
-          <button key={k} className={`nav-tab ${tab===k?'active':''}`} onClick={()=>setTab(k)}>{l}</button>
+      <div className="nav-tabs" style={{flexWrap:'wrap'}}>
+        {[['overview','📊'],['members','👥'],['settings','⚙️'],['codes','🔑']].map(([k,l])=>(
+          <button key={k} className={`nav-tab ${tab===k?'active':''}`} onClick={()=>setTab(k)} style={{fontSize:13}}>{l} {k==='overview'?'نظرة عامة':k==='members'?'الأعضاء':k==='settings'?'الإعدادات':'الأكواد'}</button>
         ))}
       </div>
 
-      {tab === 'overview' && (
+      {/* OVERVIEW */}
+      {tab==='overview'&&(
         <>
-          {/* Stats grid */}
           <div className="grid-2" style={{gap:10,marginBottom:12}}>
-            <div className="stat-card">
-              <div className="stat-num">{totalMembers}</div>
-              <div className="stat-label">إجمالي الأعضاء</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-num">{todayActive}</div>
-              <div className="stat-label">نشطوا اليوم</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-num">{avgScore}%</div>
-              <div className="stat-label">متوسط النتيجة اليوم</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-num">{fullDayCount}</div>
-              <div className="stat-label">يوم مثالي 100%</div>
-            </div>
+            {[{n:totalM,l:'إجمالي الأعضاء'},{n:todayActive,l:'نشطوا اليوم'},{n:avgScore+'%',l:'متوسط اليوم'},{n:perfect,l:'يوم مثالي 💯'}].map((x,i)=>(
+              <div key={i} className="stat-card"><div className="stat-num">{x.n}</div><div className="stat-label">{x.l}</div></div>
+            ))}
           </div>
-
-          {/* Bar chart */}
-          {chartData.length > 0 && (
+          {chartData.length>0&&(
             <div className="card">
               <div className="card-accent gold"/>
-              <p style={{fontSize:13,fontWeight:700,color:'var(--gold-light)',marginBottom:14}}>📊 متوسط الأعضاء هذا الأسبوع</p>
-              <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={chartData} margin={{top:0,right:0,bottom:0,left:-20}}>
-                  <XAxis dataKey="name" tick={{fill:'#8a9ab5',fontSize:11,fontFamily:'Cairo'}}/>
-                  <YAxis tick={{fill:'#8a9ab5',fontSize:10}} domain={[0,100]}/>
-                  <Tooltip contentStyle={{background:'#0f1a30',border:'1px solid rgba(201,168,76,0.3)',borderRadius:8,fontFamily:'Cairo',fontSize:12}}/>
-                  <Bar dataKey="avg" fill="url(#barGrad)" radius={[4,4,0,0]}/>
-                  <defs>
-                    <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#c9a84c"/>
-                      <stop offset="100%" stopColor="#52b788"/>
-                    </linearGradient>
-                  </defs>
+              <p style={{fontSize:13,fontWeight:700,color:'var(--gold-light)',marginBottom:12}}>📊 متوسط الأعضاء هذا الأسبوع</p>
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={chartData} margin={{top:0,right:0,bottom:0,left:-25}}>
+                  <XAxis dataKey="name" tick={{fill:'#8a9ab5',fontSize:10,fontFamily:'Cairo'}}/>
+                  <YAxis tick={{fill:'#8a9ab5',fontSize:9}} domain={[0,100]}/>
+                  <Tooltip contentStyle={{background:'#0f1a30',border:'1px solid rgba(201,168,76,0.3)',borderRadius:8,fontFamily:'Cairo',fontSize:11}}/>
+                  <Bar dataKey="avg" fill="url(#bg)" radius={[4,4,0,0]}/>
+                  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#c9a84c"/><stop offset="100%" stopColor="#52b788"/></linearGradient></defs>
                 </BarChart>
               </ResponsiveContainer>
             </div>
           )}
-
-          {/* Today's results */}
           <div className="card">
             <div className="card-accent green"/>
-            <p style={{fontSize:13,fontWeight:700,color:'var(--gold-light)',marginBottom:12}}>🌙 نتائج اليوم ({today()})</p>
-            {todayCards.length === 0 ? (
-              <p style={{fontSize:12,color:'var(--text-sub)',textAlign:'center',padding:'12px 0'}}>لا يوجد بيانات بعد</p>
-            ) : todayCards.sort((a,b)=>b.score-a.score).map(c=>{
-              const u = users.find(x=>x.id===c.user_id)
-              return (
-                <div key={c.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
-                  <span style={{fontSize:13,fontWeight:600}}>{u?.name||'—'}</span>
-                  <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <div style={{width:80,height:5,background:'rgba(255,255,255,0.07)',borderRadius:10,overflow:'hidden'}}>
-                      <div style={{width:c.score+'%',height:'100%',background:'linear-gradient(90deg,var(--green-light),var(--gold))',borderRadius:10}}/>
+            <p style={{fontSize:13,fontWeight:700,color:'var(--gold-light)',marginBottom:12}}>🌙 نتائج اليوم</p>
+            {todayCards.length===0?<p style={{fontSize:12,color:'var(--text-sub)',textAlign:'center',padding:'12px 0'}}>لا يوجد بيانات بعد</p>:
+              todayCards.sort((a,b)=>b.score-a.score).map(c=>{
+                const u=users.find(x=>x.id===c.user_id)
+                return (
+                  <div key={c.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
+                    <span style={{fontSize:13,fontWeight:600}}>{u?.name||'—'}</span>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <div style={{width:70,height:5,background:'rgba(255,255,255,0.07)',borderRadius:10,overflow:'hidden'}}>
+                        <div style={{width:c.score+'%',height:'100%',background:'linear-gradient(90deg,var(--green-light),var(--gold))',borderRadius:10}}/>
+                      </div>
+                      <span style={{fontSize:13,fontWeight:700,minWidth:36,color:c.score>=80?'var(--green-light)':c.score>=50?'var(--gold)':'var(--red)',textAlign:'left'}}>{c.score}%</span>
                     </div>
-                    <span style={{fontSize:13,fontWeight:700,color:c.score>=80?'var(--green-light)':c.score>=50?'var(--gold)':'var(--red)',minWidth:36,textAlign:'left'}}>{c.score}%</span>
                   </div>
-                </div>
-              )
-            })}
+                )
+              })
+            }
           </div>
         </>
       )}
 
-      {tab === 'members' && (
+      {/* MEMBERS */}
+      {tab==='members'&&(
         <div className="card">
           <div className="card-accent blue"/>
-          <p style={{fontSize:13,fontWeight:700,color:'var(--gold-light)',marginBottom:12}}>👥 الأعضاء ({totalMembers})</p>
+          <p style={{fontSize:13,fontWeight:700,color:'var(--gold-light)',marginBottom:12}}>👥 الأعضاء ({totalM})</p>
           {users.map(u=>{
-            const s = getMemberStats(u.id)
+            const s=getMemberStats(u.id)
             return (
               <div key={u.id} style={{padding:'10px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                   <div>
                     <p style={{fontSize:13,fontWeight:700}}>{u.name}</p>
-                    <p style={{fontSize:11,color:'var(--text-sub)'}}>{u.username} · انضم {u.joined_at?.split('T')[0]}</p>
+                    <p style={{fontSize:10,color:'var(--text-sub)'}}>{u.username} · {u.joined_at?.split('T')[0]}</p>
+                    <div style={{display:'flex',gap:6,marginTop:4}}>
+                      <span className={`badge ${s.fajr>=5?'badge-green':s.fajr>=3?'badge-gold':'badge-red'}`}>🌙 فجر {s.fajr}/{s.days}</span>
+                      <span className="badge badge-gold">📅 {s.days} أيام</span>
+                    </div>
                   </div>
-                  <div style={{textAlign:'center'}}>
-                    <p style={{fontSize:18,fontWeight:700,fontFamily:'Amiri,serif',color:s.avg>=80?'var(--green-light)':s.avg>=50?'var(--gold)':'var(--red)'}}>{s.avg}%</p>
-                    <p style={{fontSize:10,color:'var(--text-sub)'}}>{s.days} أيام هذا الأسبوع</p>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+                    <p style={{fontSize:20,fontWeight:700,fontFamily:"'Amiri',serif",color:s.avg>=80?'var(--green-light)':s.avg>=50?'var(--gold)':'var(--red)'}}>{s.avg}%</p>
+                    <button onClick={()=>deleteUser(u.id,u.name)}
+                      style={{padding:'4px 8px',borderRadius:8,border:'1px solid rgba(220,80,80,0.4)',
+                        background:'rgba(220,80,80,0.1)',color:'rgba(220,130,130,0.9)',fontSize:11,cursor:'pointer',fontFamily:"'Cairo',sans-serif"}}>
+                      🗑️ حذف
+                    </button>
                   </div>
-                </div>
-                <div style={{display:'flex',gap:8,marginTop:6}}>
-                  <span className={`badge ${s.fajrDays>=5?'badge-green':s.fajrDays>=3?'badge-gold':'badge-red'}`}>
-                    🌙 الفجر {s.fajrDays}/{s.days} أيام
-                  </span>
                 </div>
               </div>
             )
@@ -209,38 +241,98 @@ export default function AdminPage({ onBack }) {
         </div>
       )}
 
-      {tab === 'codes' && (
+      {/* SETTINGS */}
+      {tab==='settings'&&(
         <>
-          {CODE_TYPES.map(type => (
+          {/* Tazkia */}
+          <div className="card">
+            <div className="card-accent purple"/>
+            <div className="section-title"><span className="icon">🌱</span><span className="label">أسبوع التزكية الحالي</span></div>
+            <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:12}}>
+              {WEEKS_LIST.map(w=>(
+                <div key={w.title} className={`check-item ${tazkia.title===w.title?'done':''}`}
+                  onClick={()=>setTazkia(w)}>
+                  <div className="check-box">{tazkia.title===w.title?'✓':w.icon}</div>
+                  <span className="check-label">{w.title}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{background:'rgba(255,255,255,0.03)',borderRadius:10,padding:'10px 12px',marginBottom:10}}>
+              <p style={{fontSize:11,color:'var(--text-sub)',marginBottom:4}}>تخصيص المهمة اليومية:</p>
+              <input className="input-field" value={tazkia.task} onChange={e=>setTazkia(prev=>({...prev,task:e.target.value}))}/>
+            </div>
+            <button className="btn btn-gold btn-full" onClick={saveTazkia}>💾 حفظ أسبوع التزكية</button>
+          </div>
+
+          {/* Sunnan target */}
+          <div className="card">
+            <div className="card-accent gold"/>
+            <div className="section-title"><span className="icon">📿</span><span className="label">هدف السنن الرواتب</span></div>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
+              <button className="c-btn" onClick={()=>setSunnanTarget(Math.max(2,sunnanTarget-2))}>−</button>
+              <span style={{fontSize:28,fontWeight:700,fontFamily:"'Amiri',serif",color:'var(--gold)',flex:1,textAlign:'center'}}>{sunnanTarget} ركعة</span>
+              <button className="c-btn" onClick={()=>setSunnanTarget(Math.min(20,sunnanTarget+2))}>+</button>
+            </div>
+            <button className="btn btn-gold btn-full" onClick={saveSunnan}>💾 حفظ</button>
+          </div>
+
+          {/* Worldly goals */}
+          <div className="card">
+            <div className="card-accent teal"/>
+            <div className="section-title"><span className="icon">🌍</span><span className="label">أهداف نافذة التقدم</span></div>
+            <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:12}}>
+              {worldlyGoals.map(g=>(
+                <div key={g.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',background:'rgba(255,255,255,0.03)',borderRadius:10,border:'1px solid rgba(255,255,255,0.06)'}}>
+                  <span style={{fontSize:18}}>{g.icon}</span>
+                  <div style={{flex:1}}>
+                    <p style={{fontSize:12,fontWeight:700}}>{g.label}</p>
+                    <p style={{fontSize:10,color:'var(--text-sub)'}}>{g.duration}</p>
+                  </div>
+                  <button onClick={()=>removeGoal(g.id)} style={{background:'transparent',border:'none',color:'var(--red)',cursor:'pointer',fontSize:16}}>✕</button>
+                </div>
+              ))}
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
+              <div style={{display:'flex',gap:6}}>
+                <input className="input-field" placeholder="الأيقونة" value={newGoal.icon} onChange={e=>setNewGoal(p=>({...p,icon:e.target.value}))} style={{width:60,textAlign:'center',fontSize:18}}/>
+                <input className="input-field" placeholder="اسم الهدف..." value={newGoal.label} onChange={e=>setNewGoal(p=>({...p,label:e.target.value}))} style={{flex:1}}/>
+              </div>
+              <div style={{display:'flex',gap:6}}>
+                <input className="input-field" placeholder="المدة مثلاً: ١٥ دقيقة" value={newGoal.duration} onChange={e=>setNewGoal(p=>({...p,duration:e.target.value}))} style={{flex:1}}/>
+                <button className="btn btn-gold" style={{padding:'10px 14px'}} onClick={addGoal}>+ أضف</button>
+              </div>
+            </div>
+            <button className="btn btn-gold btn-full" onClick={saveWorldlyGoals}>💾 حفظ الأهداف</button>
+          </div>
+        </>
+      )}
+
+      {/* CODES */}
+      {tab==='codes'&&(
+        <>
+          {['admin','hafiz','group'].map(type=>(
             <div key={type} className="card">
               <div className={`card-accent ${type==='admin'?'gold':type==='hafiz'?'green':'blue'}`}/>
               <div className="section-title">
                 <span className="icon">{type==='admin'?'🛡️':type==='hafiz'?'📖':'👥'}</span>
                 <span className="label">كود {type==='admin'?'الأدمن':type==='hafiz'?'الحفاظ':'الجروب'}</span>
               </div>
-              <div style={{display:'flex',gap:8,marginBottom:8}}>
-                <input className="input-field" value={newCodes[type]||''} onChange={e=>setNewCodes(prev=>({...prev,[type]:e.target.value}))}
-                  style={{flex:1,direction:'ltr',textAlign:'center',letterSpacing:4,fontSize:16,fontWeight:700}}/>
-              </div>
+              <input className="input-field" value={newCodes[type]||''} onChange={e=>setNewCodes(p=>({...p,[type]:e.target.value}))}
+                style={{marginBottom:8,direction:'ltr',textAlign:'center',letterSpacing:5,fontSize:16,fontWeight:700}}/>
               <div style={{display:'flex',gap:8}}>
-                <button className="btn btn-ghost" style={{flex:1,fontSize:12}} onClick={()=>generateCode(type)}>⚡ توليد تلقائي</button>
+                <button className="btn btn-ghost" style={{flex:1,fontSize:12}} onClick={()=>genCode(type)}>⚡ توليد</button>
                 <button className="btn btn-gold" style={{flex:1,fontSize:12}} onClick={()=>saveCode(type)}>💾 حفظ</button>
               </div>
-              {codes[type] && (
-                <p style={{fontSize:11,color:'var(--text-sub)',textAlign:'center',marginTop:8}}>
-                  الكود الحالي: <span style={{color:'var(--gold)',letterSpacing:3,fontWeight:700}}>{codes[type]}</span>
-                </p>
-              )}
+              {codes[type]&&<p style={{fontSize:11,color:'var(--text-sub)',textAlign:'center',marginTop:8}}>الحالي: <span style={{color:'var(--gold)',letterSpacing:3,fontWeight:700}}>{codes[type]}</span></p>}
             </div>
           ))}
-          <div className="card" style={{background:'rgba(220,80,80,0.08)',border:'1px solid rgba(220,80,80,0.2)'}}>
-            <p style={{fontSize:12,color:'rgba(220,150,150,0.9)',lineHeight:1.8}}>
-              ⚠️ بعد تغيير أي كود — أبلغ الأعضاء المعنيين بالكود الجديد عبر قناة خاصة فقط.
-              لا ترسل الأكواد في الجروب العام.
-            </p>
+          <div className="card" style={{background:'rgba(220,80,80,0.07)',border:'1px solid rgba(220,80,80,0.2)'}}>
+            <p style={{fontSize:11,color:'rgba(220,150,150,0.9)',lineHeight:1.9}}>⚠️ بعد تغيير أي كود أبلغ الأعضاء عبر قناة خاصة فقط — لا ترسل الأكواد في الجروب العام.</p>
           </div>
         </>
       )}
+
+      <div className={`toast ${toast?'show':''}`}>{toast}</div>
     </div>
   )
 }

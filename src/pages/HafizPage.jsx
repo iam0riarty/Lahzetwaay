@@ -43,12 +43,17 @@ const SURAHS = [
   {n:112,name:'الإخلاص',v:4},{n:113,name:'الفلق',v:5},{n:114,name:'الناس',v:6},
 ]
 
+// 0=none 1=old_memorized 2=new_memorized 3=reviewing 4=mastered
 const S = {
-  0:{label:'لم يُحفظ',bg:'rgba(255,255,255,0.05)',border:'rgba(255,255,255,0.08)',text:'var(--text-sub)',dot:''},
-  1:{label:'حفظ جديد',bg:'rgba(201,168,76,0.3)',border:'rgba(201,168,76,0.7)',text:'var(--gold-light)',dot:'🟡'},
-  2:{label:'مراجعة جارية',bg:'rgba(91,141,217,0.35)',border:'rgba(91,141,217,0.75)',text:'#8bb4e8',dot:'🔵'},
-  3:{label:'متقن ✨',bg:'rgba(45,106,79,0.45)',border:'rgba(82,183,136,0.85)',text:'var(--green-light)',dot:'🟢'},
+  0:{label:'لم يُحفظ',      bg:'rgba(255,255,255,0.04)', border:'rgba(255,255,255,0.08)', text:'rgba(255,255,255,0.25)', dot:''},
+  1:{label:'محفوظ قديم',    bg:'rgba(155,114,207,0.25)', border:'rgba(155,114,207,0.65)', text:'#c4a6f0',               dot:'🟣'},
+  2:{label:'حفظ جديد',      bg:'rgba(201,168,76,0.28)',  border:'rgba(201,168,76,0.7)',   text:'var(--gold-light)',     dot:'🟡'},
+  3:{label:'مراجعة جارية',  bg:'rgba(91,141,217,0.3)',   border:'rgba(91,141,217,0.7)',   text:'#8bb4e8',              dot:'🔵'},
+  4:{label:'متقن ✨',        bg:'rgba(45,106,79,0.4)',    border:'rgba(82,183,136,0.85)',  text:'var(--green-light)',   dot:'🟢'},
 }
+
+const TOTAL_VERSES = 6236
+const toJuz = (verses) => (verses / TOTAL_VERSES * 30)
 
 export default function HafizPage({ onBack }) {
   const { user, verifyCode } = useAuth()
@@ -67,32 +72,45 @@ export default function HafizPage({ onBack }) {
   }
 
   const loadProgress = async () => {
-    const {data} = await supabase.from('hafiz_progress').select('*').eq('user_id',user.id)
+    const {data} = await supabase.from('hafiz_progress').select('*').eq('user_id', user.id)
     if (data) {
       const map = {}
-      data.forEach(r => { map[r.surah_number] = r.status==='none'?0:r.status==='memorized'?1:r.status==='reviewed_new'?2:3 })
+      data.forEach(r => {
+        map[r.surah_number] =
+          r.status==='old_memorized' ? 1 :
+          r.status==='memorized'     ? 2 :
+          r.status==='reviewed_new'  ? 3 :
+          r.status==='mastered'      ? 4 : 0
+      })
       setProgress(map)
     }
   }
 
+  const statusToStr = (st) => ['none','old_memorized','memorized','reviewed_new','mastered'][st] || 'none'
+
   const updateSurah = async (n, st) => {
-    const str = st===0?'none':st===1?'memorized':st===2?'reviewed_new':'mastered'
-    setProgress(p=>({...p,[n]:st}))
+    setProgress(p => ({...p,[n]:st}))
     setSelected(n)
     await supabase.from('hafiz_progress').upsert(
-      {user_id:user.id,surah_number:n,status:str,updated_at:new Date().toISOString()},
+      {user_id:user.id, surah_number:n, status:statusToStr(st), updated_at:new Date().toISOString()},
       {onConflict:'user_id,surah_number'}
     )
     showToast(`${SURAHS[n-1].name} ← ${S[st].label}`)
   }
 
-  const cycleStatus = (n) => { const cur=progress[n]||0; updateSurah(n,(cur+1)%4) }
+  const cycleStatus = (n) => { const cur = progress[n]||0; updateSurah(n, (cur+1)%5) }
   const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(''),2500) }
 
-  const counts = {0:0,1:0,2:0,3:0}
-  SURAHS.forEach(s=>{ counts[progress[s.n]||0]++ })
+  // ── Stats ──
   const memorizedVerses = SURAHS.filter(s=>(progress[s.n]||0)>=1).reduce((sum,s)=>sum+s.v,0)
-  const juz = (memorizedVerses/6236*30).toFixed(1)
+  const masteredVerses  = SURAHS.filter(s=>(progress[s.n]||0)===4).reduce((sum,s)=>sum+s.v,0)
+  const juzMemorized    = toJuz(memorizedVerses)
+  const juzMastered     = toJuz(masteredVerses)
+  const juzRemaining    = 30 - juzMemorized
+  const pctJuz          = Math.round(juzMemorized/30*100)
+
+  const counts = {0:0,1:0,2:0,3:0,4:0}
+  SURAHS.forEach(s => { counts[progress[s.n]||0]++ })
 
   if (!unlocked) return (
     <div className="app-container" style={{display:'flex',flexDirection:'column',justifyContent:'center',minHeight:'100vh'}}>
@@ -120,16 +138,16 @@ export default function HafizPage({ onBack }) {
         <button className="btn btn-ghost" style={{padding:'7px 12px',fontSize:12}} onClick={onBack}>← رجوع</button>
       </div>
 
-      {/* Mini stats bar */}
-      <div style={{display:'flex',gap:6,marginBottom:12,overflowX:'auto',paddingBottom:2}}>
+      {/* Quick stats bar */}
+      <div style={{display:'flex',gap:5,marginBottom:10,overflowX:'auto',paddingBottom:2}}>
         {[
-          {label:`${counts[1]+counts[2]+counts[3]} محفوظة`,bg:'rgba(201,168,76,0.15)',color:'var(--gold)'},
-          {label:`${counts[3]} متقنة`,bg:'rgba(45,106,79,0.2)',color:'var(--green-light)'},
-          {label:`${juz} جزء`,bg:'rgba(91,141,217,0.15)',color:'#8bb4e8'},
-          {label:`${Math.round((counts[1]+counts[2]+counts[3])/114*100)}%`,bg:'rgba(155,114,207,0.15)',color:'var(--purple)'},
-        ].map((item,i)=>(
-          <div key={i} style={{padding:'5px 10px',borderRadius:20,background:item.bg,whiteSpace:'nowrap',flexShrink:0}}>
-            <span style={{fontSize:12,fontWeight:700,color:item.color}}>{item.label}</span>
+          {label:`${juzMemorized.toFixed(1)} جزء محفوظ`, bg:'rgba(201,168,76,0.15)', color:'var(--gold)'},
+          {label:`${juzMastered.toFixed(1)} جزء متقن`,   bg:'rgba(45,106,79,0.2)',   color:'var(--green-light)'},
+          {label:`${pctJuz}% من القرآن`,                  bg:'rgba(91,141,217,0.15)', color:'#8bb4e8'},
+          {label:`باقي ${juzRemaining.toFixed(1)} جزء`,   bg:'rgba(155,114,207,0.15)',color:'#c4a6f0'},
+        ].map((x,i)=>(
+          <div key={i} style={{padding:'5px 10px',borderRadius:20,background:x.bg,whiteSpace:'nowrap',flexShrink:0}}>
+            <span style={{fontSize:11,fontWeight:700,color:x.color}}>{x.label}</span>
           </div>
         ))}
       </div>
@@ -142,66 +160,80 @@ export default function HafizPage({ onBack }) {
       {tab==='heatmap'&&(
         <>
           {/* Legend */}
-          <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:10}}>
+          <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:10}}>
             {Object.entries(S).map(([k,v])=>(
-              <div key={k} style={{display:'flex',alignItems:'center',gap:4,padding:'3px 8px',borderRadius:20,background:v.bg,border:`1px solid ${v.border}`}}>
-                <span style={{fontSize:9,color:v.text,fontWeight:700}}>{v.label}</span>
+              <div key={k} style={{display:'flex',alignItems:'center',gap:4,padding:'3px 8px',
+                borderRadius:20,background:v.bg,border:`1px solid ${v.border}`}}>
+                {v.dot&&<span style={{fontSize:9}}>{v.dot}</span>}
+                <span style={{fontSize:9.5,color:v.text,fontWeight:700}}>{v.label}</span>
               </div>
             ))}
           </div>
 
+          {/* Heatmap */}
           <div className="card" style={{padding:'12px 10px'}}>
             <div className="card-accent green"/>
             <p style={{fontSize:10,color:'var(--text-sub)',marginBottom:10,textAlign:'center'}}>
-              اضغط لتغيير الحالة • ⬜ ← 🟡 حفظ ← 🔵 مراجعة ← 🟢 إتقان
+              اضغط لتغيير الحالة: ⬜ ← 🟣 قديم ← 🟡 جديد ← 🔵 مراجعة ← 🟢 إتقان
             </p>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(48px,1fr))',gap:3}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(54px,1fr))',gap:4}}>
               {SURAHS.map(s=>{
-                const st=progress[s.n]||0, cfg=S[st], isSel=selected===s.n
+                const st = progress[s.n]||0
+                const cfg = S[st]
+                const isSel = selected===s.n
                 return (
                   <div key={s.n} onClick={()=>cycleStatus(s.n)}
                     style={{
-                      aspectRatio:'1',borderRadius:6,
-                      background:cfg.bg,
-                      border:`1.5px solid ${isSel?'var(--gold-light)':cfg.border}`,
-                      display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
-                      cursor:'pointer',transition:'all 0.12s',
-                      transform:isSel?'scale(1.1)':'scale(1)',
-                      boxShadow:isSel?`0 0 8px ${cfg.border}`:'none',
-                      padding:'2px',userSelect:'none',
+                      aspectRatio:'1', borderRadius:7,
+                      background: cfg.bg,
+                      border: `1.5px solid ${isSel?'white':cfg.border}`,
+                      display:'flex', flexDirection:'column',
+                      alignItems:'center', justifyContent:'center',
+                      cursor:'pointer', transition:'all 0.12s',
+                      transform: isSel?'scale(1.1)':'scale(1)',
+                      boxShadow: isSel?`0 0 10px ${cfg.border}`:'none',
+                      padding:'3px 2px', userSelect:'none',
+                      gap:1,
                     }}>
-                    <span style={{fontSize:7,color:'rgba(255,255,255,0.35)',lineHeight:1}}>{s.n}</span>
-                    <span style={{fontSize:8.5,color:cfg.text,fontWeight:700,textAlign:'center',lineHeight:1.2,
-                      width:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',padding:'0 1px'}}>
-                      {s.name.length>5?s.name.slice(0,4)+'…':s.name}
+                    <span style={{fontSize:7.5,color:'rgba(255,255,255,0.3)',lineHeight:1,fontWeight:600}}>{s.n}</span>
+                    <span style={{
+                      fontSize: s.name.length<=3?11:s.name.length<=4?10:s.name.length<=5?9:8,
+                      color: cfg.text, fontWeight:700,
+                      textAlign:'center', lineHeight:1.25,
+                      width:'100%', padding:'0 1px',
+                      wordBreak:'break-word',
+                    }}>
+                      {s.name}
                     </span>
-                    {st>0&&<span style={{fontSize:7,lineHeight:1}}>{cfg.dot}</span>}
+                    {st>0&&<span style={{fontSize:8,lineHeight:1}}>{cfg.dot}</span>}
                   </div>
                 )
               })}
             </div>
           </div>
 
-          {/* Selected detail */}
+          {/* Selected surah detail */}
           {selected&&(()=>{
             const s=SURAHS[selected-1], st=progress[selected]||0, cfg=S[st]
             return (
               <div className="card" style={{background:cfg.bg,border:`1px solid ${cfg.border}`,marginTop:2}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
                   <div>
-                    <p style={{fontSize:10,color:'rgba(255,255,255,0.4)'}}>السورة {s.n} • {s.v} آية</p>
+                    <p style={{fontSize:10,color:'rgba(255,255,255,0.4)'}}>السورة {s.n} • {s.v} آية • {toJuz(s.v).toFixed(2)} جزء</p>
                     <p style={{fontFamily:"'Amiri',serif",fontSize:22,color:cfg.text,fontWeight:700,marginTop:2}}>{s.name}</p>
                   </div>
-                  <span style={{fontSize:24}}>{cfg.dot||'⬜'}</span>
+                  <span style={{fontSize:22}}>{cfg.dot||'⬜'}</span>
                 </div>
-                <div style={{display:'flex',gap:5}}>
-                  {[0,1,2,3].map(v=>(
+                <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                  {[0,1,2,3,4].map(v=>(
                     <button key={v} onClick={()=>updateSurah(selected,v)}
-                      style={{flex:1,padding:'7px 2px',borderRadius:8,border:`1px solid ${S[v].border}`,
-                        background:st===v?S[v].bg:'transparent',color:S[v].text,
-                        fontSize:9.5,fontWeight:700,cursor:'pointer',fontFamily:"'Cairo',sans-serif",
-                        transition:'all 0.12s',lineHeight:1.3}}>
-                      {S[v].label}
+                      style={{flex:1,minWidth:54,padding:'7px 2px',borderRadius:8,
+                        border:`1px solid ${S[v].border}`,
+                        background:st===v?S[v].bg:'transparent',
+                        color:S[v].text, fontSize:9.5, fontWeight:700,
+                        cursor:'pointer', fontFamily:"'Cairo',sans-serif",
+                        transition:'all 0.12s', lineHeight:1.4}}>
+                      {S[v].dot||'⬜'}<br/>{S[v].label}
                     </button>
                   ))}
                 </div>
@@ -213,48 +245,67 @@ export default function HafizPage({ onBack }) {
 
       {tab==='stats'&&(
         <>
+          {/* Main juz stats */}
           <div className="card">
             <div className="card-accent green"/>
             <p style={{fontSize:13,fontWeight:700,color:'var(--gold-light)',marginBottom:14,textAlign:'center'}}>تقدمك في القرآن الكريم 📖</p>
+
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}>
               {[
-                {label:'سور محفوظة',val:counts[1]+counts[2]+counts[3],sub:'من ١١٤ سورة',c:'var(--gold)'},
-                {label:'سور متقنة',val:counts[3],sub:'حفظاً ومراجعةً',c:'var(--green-light)'},
-                {label:'نسبة الحفظ',val:Math.round((counts[1]+counts[2]+counts[3])/114*100)+'%',sub:'من القرآن',c:'var(--gold)'},
-                {label:'جزء محفوظ',val:juz,sub:'من ٣٠ جزءاً',c:'#8bb4e8'},
-              ].map((item,i)=>(
+                {label:'أجزاء محفوظة', val:juzMemorized.toFixed(1), sub:'من ٣٠ جزءاً', c:'var(--gold)'},
+                {label:'أجزاء متقنة',  val:juzMastered.toFixed(1),  sub:'حفظاً ومراجعةً', c:'var(--green-light)'},
+                {label:'نسبة الحفظ',   val:pctJuz+'%',              sub:'من القرآن بالأجزاء', c:'#8bb4e8'},
+                {label:'نسبة الإتقان', val:Math.round(juzMastered/30*100)+'%', sub:'من ٣٠ جزءاً', c:'#c4a6f0'},
+              ].map((x,i)=>(
                 <div key={i} style={{background:'rgba(255,255,255,0.04)',borderRadius:12,padding:'12px',textAlign:'center'}}>
-                  <p style={{fontFamily:"'Amiri',serif",fontSize:34,color:item.c,lineHeight:1}}>{item.val}</p>
-                  <p style={{fontSize:11,fontWeight:700,color:'var(--text)',marginTop:3}}>{item.label}</p>
-                  <p style={{fontSize:10,color:'var(--text-sub)'}}>{item.sub}</p>
+                  <p style={{fontFamily:"'Amiri',serif",fontSize:34,color:x.c,lineHeight:1}}>{x.val}</p>
+                  <p style={{fontSize:11,fontWeight:700,color:'var(--text)',marginTop:3}}>{x.label}</p>
+                  <p style={{fontSize:10,color:'var(--text-sub)'}}>{x.sub}</p>
                 </div>
               ))}
             </div>
+
+            {/* Progress bars by status */}
             {[
-              {label:'🟡 حفظ جديد',count:counts[1],color:'rgba(201,168,76,0.7)'},
-              {label:'🔵 مراجعة جارية',count:counts[2],color:'rgba(91,141,217,0.7)'},
-              {label:'🟢 متقن',count:counts[3],color:'rgba(82,183,136,0.8)'},
-            ].map(item=>(
-              <div key={item.label} style={{marginBottom:8}}>
-                <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
-                  <span style={{fontSize:11,color:'var(--text-sub)'}}>{item.label}</span>
-                  <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{item.count} سورة ({Math.round(item.count/114*100)}%)</span>
+              {label:'🟣 محفوظ قديم',   count:counts[1], c:'rgba(155,114,207,0.7)'},
+              {label:'🟡 حفظ جديد',     count:counts[2], c:'rgba(201,168,76,0.7)'},
+              {label:'🔵 مراجعة جارية', count:counts[3], c:'rgba(91,141,217,0.7)'},
+              {label:'🟢 متقن',          count:counts[4], c:'rgba(82,183,136,0.8)'},
+            ].map(x=>{
+              const v = SURAHS.filter((_,i)=>(progress[i+1]||0)===parseInt(Object.keys(counts).find(k=>counts[k]===x.count&&parseInt(k)>0))||false)
+              const juzCount = SURAHS.filter(s=>{
+                const st = progress[s.n]||0
+                return (x.label.includes('قديم')&&st===1)||(x.label.includes('جديد')&&st===2)||(x.label.includes('مراجعة')&&st===3)||(x.label.includes('متقن')&&st===4)
+              }).reduce((sum,s)=>sum+s.v,0)
+              const j = toJuz(juzCount).toFixed(1)
+              return (
+                <div key={x.label} style={{marginBottom:9}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                    <span style={{fontSize:11,color:'var(--text-sub)'}}>{x.label}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{j} جزء ({x.count} سورة)</span>
+                  </div>
+                  <div style={{height:6,background:'rgba(255,255,255,0.07)',borderRadius:10,overflow:'hidden'}}>
+                    <div style={{height:'100%',width:`${juzCount/TOTAL_VERSES*100}%`,background:x.c,borderRadius:10,transition:'width 0.5s'}}/>
+                  </div>
                 </div>
-                <div style={{height:6,background:'rgba(255,255,255,0.07)',borderRadius:10,overflow:'hidden'}}>
-                  <div style={{height:'100%',width:`${item.count/114*100}%`,background:item.color,borderRadius:10,transition:'width 0.5s'}}/>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
-          <div className="card" style={{textAlign:'center',background:'linear-gradient(135deg,rgba(201,168,76,0.1),rgba(201,168,76,0.03))'}}>
+          {/* Remaining card - motivational */}
+          <div className="card" style={{background:'linear-gradient(135deg,rgba(201,168,76,0.12),rgba(45,106,79,0.08))',border:'1px solid rgba(201,168,76,0.25)',textAlign:'center'}}>
             <div className="card-accent gold"/>
-            <p style={{fontSize:11,color:'var(--text-sub)',marginBottom:4}}>إجمالي الآيات المحفوظة</p>
-            <p style={{fontFamily:"'Amiri',serif",fontSize:44,color:'var(--gold)',lineHeight:1}}>{memorizedVerses.toLocaleString()}</p>
-            <p style={{fontSize:12,color:'var(--text-sub)',marginTop:4}}>آية من أصل ٦٢٣٦ آية</p>
-            <div className="progress-bar" style={{marginTop:10}}>
-              <div className="progress-fill" style={{width:`${memorizedVerses/6236*100}%`}}/>
+            <p style={{fontSize:11,color:'var(--text-sub)',marginBottom:8}}>باقيلك على الختم</p>
+            <p style={{fontFamily:"'Amiri',serif",fontSize:52,color:'var(--gold)',lineHeight:1,textShadow:'0 0 20px rgba(201,168,76,0.4)'}}>{juzRemaining.toFixed(1)}</p>
+            <p style={{fontSize:14,color:'var(--gold-light)',marginTop:4,fontWeight:700}}>جزء من أصل ٣٠</p>
+
+            <div className="progress-bar" style={{margin:'12px 0 8px'}}>
+              <div className="progress-fill" style={{width:pctJuz+'%'}}/>
             </div>
+            <p style={{fontSize:11,color:'var(--text-sub)',lineHeight:1.8}}>
+              قال ﷺ: <span style={{color:'var(--gold-light)',fontFamily:"'Amiri',serif",fontSize:13}}>"اقرأ وارتق ورتل كما كنت ترتل في الدنيا"</span><br/>
+              <span style={{fontSize:10}}>كل جزء تحفظه رفعة وشفاعة يوم القيامة 🌙</span>
+            </p>
           </div>
         </>
       )}

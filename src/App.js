@@ -25,22 +25,22 @@ function AppInner() {
 
   if (!user) return <AuthPage/>
 
-  // Admin always bypasses the gate
   if (page === 'admin') return <AdminPage onBack={()=>setPage('home')}/>
   if (page === 'hafiz') return <HafizPage onBack={()=>setPage('home')}/>
 
-  // Group gate for regular members
-  if (!groupUnlocked) return <GroupGate onUnlocked={()=>setGroupUnlocked(true)}/>
+  if (!groupUnlocked) return (
+    <GroupGate
+      onUnlocked={()=>setGroupUnlocked(true)}
+      onAdmin={()=>setPage('admin')}
+    />
+  )
 
   return (
     <>
       <DailyCard onNavigate={setPage}/>
       <div style={{textAlign:'center',padding:'6px 0 4px',position:'relative',zIndex:1}}>
-        <span
-          style={{fontSize:10,color:'var(--text-sub)',cursor:'pointer',letterSpacing:1,
-            fontFamily:'var(--font-arabic)',opacity:0.5}}
-          onClick={()=>setPage('admin')}
-        >
+        <span style={{fontSize:10,color:'var(--text-sub)',cursor:'pointer',letterSpacing:1,
+          fontFamily:'var(--font-arabic)',opacity:0.5}} onClick={()=>setPage('admin')}>
           ✦ لحظة وعي ✦
         </span>
       </div>
